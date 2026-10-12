@@ -1,5 +1,13 @@
 name: build-t2-image
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag"
+        default: "v2"
+      patch:
+        description: "Apply patches/fhs.patch (true) or build the unchanged reference (false)"
+        default: "true"
 
 permissions:
   contents: read
@@ -14,6 +22,20 @@ jobs:
         with:
           repository: Agenthon-2026/track2-forecasting-public
           ref: a2c93e7b66b8c6a6c429fda81d6bc7873b7c5dec
+
+      - name: Check out this repository (patches)
+        uses: actions/checkout@v4
+        with:
+          path: _self
+
+      - name: Apply forecaster patch
+        if: ${{ inputs.patch == 'true' }}
+        run: |
+          git apply --verbose _self/patches/fhs.patch
+          git diff --stat
+
+      - name: Remove helper checkout from build context
+        run: rm -rf _self
 
       - name: Image name (lowercase)
         id: name
@@ -36,7 +58,15 @@ jobs:
           push: true
           provenance: false
           sbom: false
-          tags: ${{ steps.name.outputs.image }}:v1
+          tags: ${{ steps.name.outputs.image }}:${{ inputs.tag }}
+
+      - name: Smoke-run the built image on the worked example
+        run: |
+          docker run --rm --platform linux/amd64 -v "$PWD/units/t2-F3-dollar-vortex-2022:/input:ro" -v "$PWD/_o:/output" \
+            ${{ steps.name.outputs.image }}@${{ steps.build.outputs.digest }} \
+            forecast --panels /input --text /input/text --asof 2022-09-01 --card /input/card.toml --out /output/forecast.parquet || true
+          ls -la _o || true
+          head -12 _o/forecast_rationale.md || true
 
       - name: Show the digest
         run: |
